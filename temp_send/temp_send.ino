@@ -25,7 +25,7 @@ void loop() {
     int rawADC = analogRead(sensorPin);
     
     // 2. Convert ADC to Voltage (assuming 5V system, adjust to 3.3V if needed)
-    float voltage = rawADC * (5.0 / 1023.0);
+    float voltage = rawADC * (3.3 / 1023.0);
     
     // 3. Apply your formula: Temp °C = 100 * (V) - 50
     float tempC = (100.0 * voltage) - 50.0;
