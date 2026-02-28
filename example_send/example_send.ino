@@ -45,16 +45,17 @@ void setup() {
         SERIAL_PORT_MONITOR.println("CAN init fail, retry...");
         delay(100);
     }
-    SERIAL_PORT_MONITOR.println("CAN init ok! Sending 'HELLO!!!'");
+    SERIAL_PORT_MONITOR.println("CAN init ok! Sending 'HELLO?'");
 }
 
-unsigned char stmp[8] = {'H', 'E', 'L', 'L', 'O', '!', '!', '!'};
+unsigned char stmp[6] = {'H', 'E', 'L', 'L', 'O', '?'};
 void loop() {
     // send data:  id = 0x00, standrad frame, data len = 8, stmp: data buf
 
-    CAN.sendMsgBuf(0x00, 0, 8, stmp);
-    SERIAL_PORT_MONITOR.println("CAN BUS Sent: HELLO!!!");
+    CAN.sendMsgBuf(0x00, 0, 6, stmp);
+    SERIAL_PORT_MONITOR.println("CAN BUS Sent: HELLO?");
     delay(1000); // Send data every 1000ms
 }
 
 // END FILE
+// HI!!!!
