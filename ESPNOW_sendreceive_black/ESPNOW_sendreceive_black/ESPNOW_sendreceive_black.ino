@@ -2,7 +2,7 @@
 #include <WiFi.h>
 
 // REPLACE WITH THE OTHER BOARD'S MAC ADDRESS
-uint8_t peerAddress[] = {0x31, 0x94, 0x54, 0x39, 0x1C, 0x28};
+uint8_t peerAddress[] = {0x31, 0x94, 0x54, 0x39, 0x1C, 0x28}; //RED'S ADDRESS (CONNECT TO BLACK) (BLACK SHOULD BE WITH OBSERVER)
 
 typedef struct struct_message {
   char a[32];
