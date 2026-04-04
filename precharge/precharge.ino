@@ -1,44 +1,48 @@
+int BMS_IN = 2;
+int PRE = 3;
+int MAIN = 4;
+
 void setup() {
   Serial.begin(9600);
 
   //control
-  pinMode(2, INPUT);
+  pinMode(BMS_IN, INPUT);
   //precharge enable
-  pinMode(3, OUTPUT);
+  pinMode(PRE, OUTPUT);
   //charge enable
-  pinMode(4, OUTPUT);
+  pinMode(MAIN, OUTPUT);
 
-  digitalWrite(3, LOW);
-  digitalWrite(4, LOW);
+  digitalWrite(PRE, LOW);
+  digitalWrite(MAIN, LOW);
 }
 
 void loop() {
 
-  //read discharge enable from bms, start precharging when BMS output goes from 12V -> 0V
-  if (digitalRead(2) == LOW) {
+  //read discharge enable from bms, start precharging when BMS output goes from 1BMS_INV -> 0V
+  if (digitalRead(BMS_IN) == LOW) {
     // Serial.println("Beginning");
     precharge();
 
-    while(digitalRead(2) == LOW){
-      Serial.println(digitalRead(2));
-      digitalWrite(4, HIGH);
+    while(digitalRead(BMS_IN) == LOW){
+      Serial.println(digitalRead(BMS_IN));
+      digitalWrite(MAIN, HIGH);
     }
 
   } else {
     Serial.println("Off");
-    digitalWrite(3, LOW);
-    digitalWrite(4, LOW);
+    digitalWrite(PRE, LOW);
+    digitalWrite(MAIN, LOW);
   }
-  // Serial.println(digitalRead(2));
+  // Serial.println(digitalRead(BMS_IN));
 }
 
 void precharge() {
   // Turn pin 3 on and wait 2.5 sec
     Serial.println("Starting precharge");
-    digitalWrite(3, HIGH);
+    digitalWrite(PRE, HIGH);
     delay(2500); 
 
     // Turn pin 3 off, wait 0.5 sec
-    digitalWrite(3, LOW);
+    digitalWrite(PRE, LOW);
     delay(500);
 }
