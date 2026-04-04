@@ -1,8 +1,11 @@
 void setup() {
   Serial.begin(9600);
 
+  //control
   pinMode(2, INPUT);
+  //precharge enable
   pinMode(3, OUTPUT);
+  //charge enable
   pinMode(4, OUTPUT);
 
   digitalWrite(3, LOW);
@@ -11,11 +14,12 @@ void setup() {
 
 void loop() {
 
-  if (digitalRead(2) == HIGH) {
+  //read discharge enable from bms, start precharging when BMS output goes from 12V -> 0V
+  if (digitalRead(2) == LOW) {
     // Serial.println("Beginning");
     precharge();
 
-    while(digitalRead(2) == HIGH){
+    while(digitalRead(2) == LOW){
       Serial.println(digitalRead(2));
       digitalWrite(4, HIGH);
     }
