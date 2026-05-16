@@ -416,7 +416,7 @@
         "uuid": "6a378964-af37-417d-8d6e-41cb88e708d4"
       }
     ],
-    "used_designators": "MCP1,#PWR1-3,Nextion1-2,NEO\\-6M1,J1-4,U1",
+    "used_designators": "",
     "variants": []
   },
   "sheets": [
