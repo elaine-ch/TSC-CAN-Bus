@@ -1,6 +1,7 @@
 #include <SPI.h>
 #include "mcp2515_can.h"
 #include "max6675.h"
+#include "bms_fault.h"
 
 #if defined(ARDUINO_ARCH_ESP32)
     const int PIN_ID_BIT0 = 14; // Bit 0 for ESP32
@@ -31,9 +32,14 @@ MAX6675* thermocouple3 = nullptr;
 mcp2515_can CAN(CAN_CS_PIN);
 
 // Orion BMS ID Definitions
-#define BMS_ID_A 0x6B0
-#define BMS_ID_B 0x6B1
+#define BMS_ID_A    0x6B0
+#define BMS_ID_B    0x6B1
+#define BMS_ID_ERR1 0x6B2
+#define BMS_ID_ERR2 0x6B3
 // ---------------------------------------
+
+#define NODE0_TO_ESP32_FAULT_ID 0x10
+const int FAULT_LIGHT_PIN = 7;
 
 unsigned long MY_CAN_ID;
 int BOARD_INDEX;
@@ -53,6 +59,9 @@ void setup() {
     
     BOARD_INDEX = (bit1 << 1) | bit0; 
     MY_CAN_ID = (unsigned long)BOARD_INDEX; 
+
+    pinMode(FAULT_LIGHT_PIN, OUTPUT);
+    digitalWrite(FAULT_LIGHT_PIN, HIGH);
 
     if (BOARD_INDEX == 1) {
         thermocouple1 = new MAX6675(thermo1_CLK, thermo1_CS, thermo1_DO);
@@ -88,6 +97,87 @@ void loop() {
           } 
           else if (incomingId == BMS_ID_B) {
               decodeBmsB(buf); 
+          }
+
+          // PROCESS FAULT TABLE 1 
+          else if (incomingId == BMS_ID_ERR1) {
+              uint16_t faultWord1 = (buf[0] << 8) | buf[1]; // Packed in Bytes 0 & 1
+              
+              // Persistent state tracker to keep the light on across distinct CAN frames
+              static bool table1UrgentActive = false; 
+              static bool table2UrgentActive = false; 
+              
+              table1UrgentActive = false; // Reset before checking current frame bits
+
+              for (int i = 0; i < NUM_FAULTS_1; i++) {
+                  if (faultWord1 & faultTable1[i].mask) {
+                      Serial.print("[BMS Table 1] Active: ");
+                      Serial.print(faultTable1[i].dtc);
+                      Serial.print(" - ");
+                      Serial.print(faultTable1[i].codeName);
+                      Serial.println(faultTable1[i].isUrgent ? " [URGENT]" : " [NON-URGENT]");
+
+                      if (faultTable1[i].isUrgent) table1UrgentActive = true;
+
+                      // Send payload to ESP32: [Table ID, Mask High, Mask Low, Urgency]
+                      unsigned char txFault[8] = {0}; 
+                      txFault[0] = 1; 
+                      txFault[1] = (uint8_t)(faultTable1[i].mask >> 8);   
+                      txFault[2] = (uint8_t)(faultTable1[i].mask & 0xFF);  
+
+                      if (faultTable1[i].isUrgent) {
+                          txFault[3] = 1; 
+                      } else {
+                          txFault[3] = 0; 
+                      }
+
+                      CAN.sendMsgBuf(NODE0_TO_ESP32_FAULT_ID, 0, 4, txFault);
+                      delay(5); 
+                  }
+              }
+
+              // Update the physical light based on combined system states
+              digitalWrite(FAULT_LIGHT_PIN, (table1UrgentActive || table2UrgentActive) ? LOW : HIGH);
+          }
+          
+          // PROCESS FAULT TABLE 2 
+          else if (incomingId == BMS_ID_ERR2) {
+              uint16_t faultWord2 = (buf[0] << 8) | buf[1]; 
+              
+              static bool table1UrgentActive = false; 
+              static bool table2UrgentActive = false; 
+              
+              table2UrgentActive = false; 
+
+              for (int i = 0; i < NUM_FAULTS_2; i++) {
+                  if (faultWord2 & faultTable2[i].mask) {
+                      Serial.print("[BMS Table 2] Active: ");
+                      Serial.print(faultTable2[i].dtc);
+                      Serial.print(" - ");
+                      Serial.print(faultTable2[i].codeName);
+                      Serial.println(faultTable2[i].isUrgent ? " [URGENT]" : " [NON-URGENT]");
+
+                      if (faultTable2[i].isUrgent) table2UrgentActive = true;
+
+                      // Send payload to ESP32: [Table ID, Mask High, Mask Low, Urgency]
+                      unsigned char txFault[8] = {0}; 
+                      txFault[0] = 2; 
+                      txFault[1] = (uint8_t)(faultTable2[i].mask >> 8);   
+                      txFault[2] = (uint8_t)(faultTable2[i].mask & 0xFF);  
+
+                      if (faultTable2[i].isUrgent) {
+                          txFault[3] = 1; 
+                      } else {
+                          txFault[3] = 0; 
+                      }
+
+                      CAN.sendMsgBuf(NODE0_TO_ESP32_FAULT_ID, 0, 4, txFault);
+                      delay(5); 
+                  }
+              }
+
+              // Update the physical light based on combined system states
+              digitalWrite(FAULT_LIGHT_PIN, (table1UrgentActive || table2UrgentActive) ? LOW : HIGH);
           }
           // Process other sensor nodes (Assumed to be Temp Nodes)
           else {
@@ -188,6 +278,34 @@ void loop() {
               Serial.print("°F | T2: "); Serial.print(mppt_temp2);
               Serial.print("°F | T3: "); Serial.print(mppt_temp3);
               Serial.println("°F");
+          }
+          else if (incomingId == NODE0_TO_ESP32_FAULT_ID) {
+              uint8_t tableId = buf[0];
+              uint16_t rxMask = (buf[1] << 8) | buf[2];
+              bool rxUrgent = (buf[3] == 1);
+
+              if (tableId == 1) {
+                  for (int i = 0; i < NUM_FAULTS_1; i++) {
+                      if (rxMask == faultTable1[i].mask) {
+                          Serial.print("[ESP32] Table 1 DTC: ");
+                          Serial.print(faultTable1[i].dtc);
+                          Serial.print(" (");
+                          Serial.print(faultTable1[i].codeName);
+                          Serial.println(rxUrgent ? ") -> URGENT" : ")");
+                      }
+                  }
+              }
+              else if (tableId == 2) {
+                  for (int i = 0; i < NUM_FAULTS_2; i++) {
+                      if (rxMask == faultTable2[i].mask) {
+                          Serial.print("[ESP32 ALARM] Table 2 DTC: ");
+                          Serial.print(faultTable2[i].dtc);
+                          Serial.print(" (");
+                          Serial.print(faultTable2[i].codeName);
+                          Serial.println(rxUrgent ? ") -> URGENT" : ")");
+                      }
+                  }
+              }
           }
       }
     }
