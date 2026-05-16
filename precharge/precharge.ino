@@ -1,4 +1,4 @@
-int BMS_IN = 2;
+int BMS_IN = 13;
 int PRE = 3;
 int MAIN = 4;
 
