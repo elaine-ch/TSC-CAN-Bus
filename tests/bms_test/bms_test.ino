@@ -2,9 +2,9 @@
 #include "mcp2515_can.h"
 
 #if defined(ARDUINO_ARCH_ESP32)
-    const int CAN_CS_PIN  = 10;
+    const int CAN_CS_PIN  = 9;  // Seeed Studio CAN BUS Shield v2.0 uses pin 9
 #else
-    const int CAN_CS_PIN  = 10;
+    const int CAN_CS_PIN  = 9;  // Seeed Studio CAN BUS Shield v2.0 uses pin 9
 #endif
 
 mcp2515_can CAN(CAN_CS_PIN);

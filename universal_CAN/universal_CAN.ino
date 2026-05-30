@@ -8,8 +8,8 @@
     const int PIN_ID_BIT1 = 12; // Bit 1 for ESP32
 #else
     const int PIN_ID_BIT0 = 8; // Bit 0 for Arduino
-    const int PIN_ID_BIT1 = 9; // Bit 1 for Arduino
-    const int CAN_CS_PIN  = 10;      
+    const int PIN_ID_BIT1 = 2; // Bit 1 for Arduino (changed from 9 to avoid CAN CS conflict)
+    const int CAN_CS_PIN  = 9;  // Seeed Studio CAN BUS Shield v2.0 uses pin 9      
     const int TEMP_SENSOR_PIN = A0; 
 #endif
 
@@ -22,7 +22,7 @@
 #define thermo2_CS  A2
 #define thermo2_CLK A1
 
-#define thermo3_DO  2
+#define thermo3_DO  3
 #define thermo3_CS  A5
 #define thermo3_CLK A4
 
@@ -44,24 +44,16 @@ const int FAULT_LIGHT_PIN = 7;
 unsigned long MY_CAN_ID;
 int BOARD_INDEX;
 
-// ===== FAULT PRIORITY SYSTEM =====
-// Track the most urgent fault to send to ESP32
-struct ActiveFault {
-    uint16_t mask;
-    int tableId;
-    bool isUrgent;
-    const char* dtc;
-    const char* codeName;
-};
-
-ActiveFault mostUrgentFault = {0, 0, false, "", ""};
-bool anyUrgentFaultActive = false;
+// ===== FAULT TRACKING =====
+// Track current and previous fault states to detect changes
+uint16_t currentFaultWord1 = 0;
+uint16_t currentFaultWord2 = 0;
+uint16_t previousFaultWord1 = 0xFFFF;  // Set to impossible value to force initial send
+uint16_t previousFaultWord2 = 0xFFFF;  // Set to impossible value to force initial send
 
 // Forward declarations for compiler stability
 void decodeBmsA(byte *buf);
 void decodeBmsB(byte *buf);
-void updateMostUrgentFault(uint16_t faultMask, int tableId);
-void sendFaultToESP32(const ActiveFault& fault);
 
 void setup() {
     Serial.begin(115200);
@@ -117,9 +109,11 @@ void loop() {
           // PROCESS FAULT TABLE 1
           else if (incomingId == BMS_ID_ERR1) {
               uint16_t faultWord1 = (buf[0] << 8) | buf[1]; // Packed in Bytes 0 & 1
+              currentFaultWord1 = faultWord1;
 
-              anyUrgentFaultActive = false;
+              bool anyUrgentActive = false;
 
+              // Decode and print all active faults
               for (int i = 0; i < NUM_FAULTS_1; i++) {
                   if (faultWord1 & faultTable1[i].mask) {
                       Serial.print("[BMS Table 1] Active: ");
@@ -129,29 +123,48 @@ void loop() {
                       Serial.println(faultTable1[i].isUrgent ? " [URGENT]" : " [NON-URGENT]");
 
                       if (faultTable1[i].isUrgent) {
-                          anyUrgentFaultActive = true;
+                          anyUrgentActive = true;
                       }
-
-                      // Update most urgent fault (but don't send yet)
-                      updateMostUrgentFault(faultTable1[i].mask, 1);
                   }
               }
 
-              // Send only the most urgent fault to ESP32 (if any)
-              if (mostUrgentFault.mask != 0) {
-                  sendFaultToESP32(mostUrgentFault);
-              }
-
               // Update the physical light based on urgent fault status
-              digitalWrite(FAULT_LIGHT_PIN, anyUrgentFaultActive ? LOW : HIGH);
+              digitalWrite(FAULT_LIGHT_PIN, anyUrgentActive ? LOW : HIGH);
+
+              // Only send to ESP32 if fault state changed
+              if (faultWord1 != previousFaultWord1) {
+                  Serial.println("[Table 1 state changed - sending to ESP32]");
+
+                  // Send all active faults from this table
+                  for (int i = 0; i < NUM_FAULTS_1; i++) {
+                      if (faultWord1 & faultTable1[i].mask) {
+                          unsigned char txFault[8] = {0};
+                          txFault[0] = 1;  // Table ID
+                          txFault[1] = (uint8_t)(faultTable1[i].mask >> 8);
+                          txFault[2] = (uint8_t)(faultTable1[i].mask & 0xFF);
+                          txFault[3] = faultTable1[i].isUrgent ? 1 : 0;
+
+                          CAN.sendMsgBuf(NODE0_TO_ESP32_FAULT_ID, 0, 4, txFault);
+
+                          Serial.print("    >>> [TX to ESP32] ");
+                          Serial.print(faultTable1[i].dtc);
+                          Serial.println(faultTable1[i].isUrgent ? " [URGENT]" : " [NON-URGENT]");
+                          delay(5);
+                      }
+                  }
+
+                  previousFaultWord1 = faultWord1;
+              }
           }
           
           // PROCESS FAULT TABLE 2
           else if (incomingId == BMS_ID_ERR2) {
               uint16_t faultWord2 = (buf[0] << 8) | buf[1];
+              currentFaultWord2 = faultWord2;
 
-              anyUrgentFaultActive = false;
+              bool anyUrgentActive = false;
 
+              // Decode and print all active faults
               for (int i = 0; i < NUM_FAULTS_2; i++) {
                   if (faultWord2 & faultTable2[i].mask) {
                       Serial.print("[BMS Table 2] Active: ");
@@ -161,21 +174,38 @@ void loop() {
                       Serial.println(faultTable2[i].isUrgent ? " [URGENT]" : " [NON-URGENT]");
 
                       if (faultTable2[i].isUrgent) {
-                          anyUrgentFaultActive = true;
+                          anyUrgentActive = true;
                       }
-
-                      // Update most urgent fault (but don't send yet)
-                      updateMostUrgentFault(faultTable2[i].mask, 2);
                   }
               }
 
-              // Send only the most urgent fault to ESP32 (if any)
-              if (mostUrgentFault.mask != 0) {
-                  sendFaultToESP32(mostUrgentFault);
-              }
-
               // Update the physical light based on urgent fault status
-              digitalWrite(FAULT_LIGHT_PIN, anyUrgentFaultActive ? LOW : HIGH);
+              digitalWrite(FAULT_LIGHT_PIN, anyUrgentActive ? LOW : HIGH);
+
+              // Only send to ESP32 if fault state changed
+              if (faultWord2 != previousFaultWord2) {
+                  Serial.println("[Table 2 state changed - sending to ESP32]");
+
+                  // Send all active faults from this table
+                  for (int i = 0; i < NUM_FAULTS_2; i++) {
+                      if (faultWord2 & faultTable2[i].mask) {
+                          unsigned char txFault[8] = {0};
+                          txFault[0] = 2;  // Table ID
+                          txFault[1] = (uint8_t)(faultTable2[i].mask >> 8);
+                          txFault[2] = (uint8_t)(faultTable2[i].mask & 0xFF);
+                          txFault[3] = faultTable2[i].isUrgent ? 1 : 0;
+
+                          CAN.sendMsgBuf(NODE0_TO_ESP32_FAULT_ID, 0, 4, txFault);
+
+                          Serial.print("    >>> [TX to ESP32] ");
+                          Serial.print(faultTable2[i].dtc);
+                          Serial.println(faultTable2[i].isUrgent ? " [URGENT]" : " [NON-URGENT]");
+                          delay(5);
+                      }
+                  }
+
+                  previousFaultWord2 = faultWord2;
+              }
           }
           // Process other sensor nodes (Assumed to be Temp Nodes)
           else {
@@ -187,22 +217,6 @@ void loop() {
               Serial.print(remoteTemp);
               Serial.println(" F");
           }
-      }
-
-      //TRANSMIT
-      static unsigned long lastSend0 = 0;
-      if (millis() - lastSend0 > 1000) {
-          // FIXED: Placeholder added to replace undefined tempF variable
-          float bmsPlaceholderData = 0.0; 
-          
-          // CAN.sendMsgBuf(MY_CAN_ID, 0, 4, (unsigned char*)&bmsPlaceholderData);
-          
-          Serial.print(">>> [TX] Node ");
-          Serial.print(BOARD_INDEX);
-          Serial.print(" sent: ");
-          Serial.print(bmsPlaceholderData);
-          Serial.println(" F");
-          lastSend0 = millis();
       }
     }
 
