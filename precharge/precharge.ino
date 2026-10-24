@@ -1,4 +1,4 @@
-int BMS_IN = 13;
+int BMS_IN = 5;
 int PRE = 3;
 int MAIN = 4;
 
@@ -37,12 +37,12 @@ void loop() {
 }
 
 void precharge() {
-  // Turn pin 3 on and wait 2.5 sec
+  // Turn pin 3 on and wait 6 sec
     Serial.println("Starting precharge");
     digitalWrite(PRE, HIGH);
-    delay(2500); 
+    delay(6000); 
 
-    // Turn pin 3 off, wait 0.5 sec
+    // Turn pin 3 off, wait 1 sec
     digitalWrite(PRE, LOW);
-    delay(500);
+    delay(1000);
 }
