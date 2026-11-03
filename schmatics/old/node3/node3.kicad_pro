@@ -472,7 +472,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "node1Test.kicad_pro",
+    "filename": "node3.kicad_pro",
     "version": 3
   },
   "net_settings": {
@@ -507,7 +507,7 @@
   "pcbnew": {
     "last_paths": {
       "idf": "",
-      "netlist": "../schematic/node1Test.net",
+      "netlist": "",
       "plot": "",
       "specctra_dsn": "",
       "vrml": ""
@@ -627,17 +627,17 @@
     "subpart_id_separator": 0,
     "top_level_sheets": [
       {
-        "filename": "node1Test.kicad_sch",
+        "filename": "node3.kicad_sch",
         "name": "Root",
-        "uuid": "6e48e298-eaa0-44a2-9bd7-feda466659e2"
+        "uuid": "6a378964-af37-417d-8d6e-41cb88e708d4"
       }
     ],
-    "used_designators": "",
+    "used_designators": "J2-3,J5",
     "variants": []
   },
   "sheets": [
     [
-      "6e48e298-eaa0-44a2-9bd7-feda466659e2",
+      "6a378964-af37-417d-8d6e-41cb88e708d4",
       "Root"
     ]
   ],
