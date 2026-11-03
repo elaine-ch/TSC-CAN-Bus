@@ -4,24 +4,19 @@
 #include "bms_fault.h"
 
 // Arduino configuration (Seeed Studio CAN BUS Shield v2.0)
-const int PIN_ID_BIT0 = 8;   // Bit 0 for Arduino
-const int PIN_ID_BIT1 = 3;   // CHANGED: Moved from 2 to 3 to avoid CAN hardware interrupt conflict
-const int CAN_CS_PIN  = 9;   // Seeed Studio CAN BUS Shield v2.0 uses pin 9
+const int PIN_ID_BIT0 = 8;   
+const int PIN_ID_BIT1 = 3;   
+const int CAN_CS_PIN  = 9;   
 
-// --- Node 1 Shared MAX6675 Clock ---
-#define SHARED_CLK  6
+// --- Node 1 Optimized Sensor Bus ---
+#define SHARED_DO   A0
+#define SHARED_CLK  A1
 
-// --- Node 1 Sensor Pin Definitions ---
-#define thermo1_DO  4
-#define thermo1_CS  5
+#define thermo1_CS  A2
+#define thermo2_CS  A3
+#define thermo3_CS  A4
 
-#define thermo2_DO  A3
-#define thermo2_CS  A2
-
-#define thermo3_DO  A0       // CHANGED: Moved to A0
-#define thermo3_CS  A5
-
-#define CURRENT_SENSOR_PIN A1 // WCS1800 Analog Output
+#define CURRENT_SENSOR_PIN A5 
 
 MAX6675* thermocouple1 = nullptr;
 MAX6675* thermocouple2 = nullptr;
@@ -42,14 +37,11 @@ const int FAULT_LIGHT_PIN = 7;
 unsigned long MY_CAN_ID;
 int BOARD_INDEX;
 
-// ===== FAULT TRACKING =====
-// Track current and previous fault states to detect changes
 uint16_t currentFaultWord1 = 0;
 uint16_t currentFaultWord2 = 0;
-uint16_t previousFaultWord1 = 0xFFFF;  // Set to impossible value to force initial send
-uint16_t previousFaultWord2 = 0xFFFF;  // Set to impossible value to force initial send
+uint16_t previousFaultWord1 = 0xFFFF;  
+uint16_t previousFaultWord2 = 0xFFFF;  
 
-// Forward declarations for compiler stability
 void decodeBmsA(byte *buf);
 void decodeBmsB(byte *buf);
 
@@ -69,9 +61,9 @@ void setup() {
     digitalWrite(FAULT_LIGHT_PIN, HIGH);
 
     if (BOARD_INDEX == 1) {
-        thermocouple1 = new MAX6675(SHARED_CLK, thermo1_CS, thermo1_DO);
-        thermocouple2 = new MAX6675(SHARED_CLK, thermo2_CS, thermo2_DO);
-        thermocouple3 = new MAX6675(SHARED_CLK, thermo3_CS, thermo3_DO);
+        thermocouple1 = new MAX6675(SHARED_CLK, thermo1_CS, SHARED_DO);
+        thermocouple2 = new MAX6675(SHARED_CLK, thermo2_CS, SHARED_DO);
+        thermocouple3 = new MAX6675(SHARED_CLK, thermo3_CS, SHARED_DO);
         delay(500);
     }
     
@@ -86,8 +78,7 @@ void setup() {
 
 void loop() {
     //CODE FOR NODE 0 (BMS)
-    if(BOARD_INDEX == 0){
-      //RECEIVE
+    if(BOARD_INDEX == 3){
       if (CAN_MSGAVAIL == CAN.checkReceive()) {
           unsigned char len = 0;
           unsigned char buf[8];
@@ -96,22 +87,18 @@ void loop() {
           
           if (incomingId == MY_CAN_ID) return;
 
-          // Process Orion BMS Messages
           if (incomingId == BMS_ID_A) {
               decodeBmsA(buf);
           } 
           else if (incomingId == BMS_ID_B) {
               decodeBmsB(buf); 
           }
-
-          // PROCESS FAULT TABLE 1
           else if (incomingId == BMS_ID_ERR1) {
-              uint16_t faultWord1 = (buf[0] << 8) | buf[1]; // Packed in Bytes 0 & 1
+              uint16_t faultWord1 = (buf[0] << 8) | buf[1]; 
               currentFaultWord1 = faultWord1;
 
               bool anyUrgentActive = false;
 
-              // Decode and print all active faults
               for (int i = 0; i < NUM_FAULTS_1; i++) {
                   if (faultWord1 & faultTable1[i].mask) {
                       Serial.print("[BMS Table 1] Active: ");
@@ -126,18 +113,15 @@ void loop() {
                   }
               }
 
-              // Update the physical light based on urgent fault status
               digitalWrite(FAULT_LIGHT_PIN, anyUrgentActive ? LOW : HIGH);
 
-              // Only send to ESP32 if fault state changed
               if (faultWord1 != previousFaultWord1) {
                   Serial.println("[Table 1 state changed - sending to ESP32]");
 
-                  // Send all active faults from this table
                   for (int i = 0; i < NUM_FAULTS_1; i++) {
                       if (faultWord1 & faultTable1[i].mask) {
                           unsigned char txFault[8] = {0};
-                          txFault[0] = 1;  // Table ID
+                          txFault[0] = 1;  
                           txFault[1] = (uint8_t)(faultTable1[i].mask >> 8);
                           txFault[2] = (uint8_t)(faultTable1[i].mask & 0xFF);
                           txFault[3] = faultTable1[i].isUrgent ? 1 : 0;
@@ -150,19 +134,15 @@ void loop() {
                           delay(5);
                       }
                   }
-
                   previousFaultWord1 = faultWord1;
               }
           }
-          
-          // PROCESS FAULT TABLE 2
           else if (incomingId == BMS_ID_ERR2) {
               uint16_t faultWord2 = (buf[0] << 8) | buf[1];
               currentFaultWord2 = faultWord2;
 
               bool anyUrgentActive = false;
 
-              // Decode and print all active faults
               for (int i = 0; i < NUM_FAULTS_2; i++) {
                   if (faultWord2 & faultTable2[i].mask) {
                       Serial.print("[BMS Table 2] Active: ");
@@ -177,18 +157,15 @@ void loop() {
                   }
               }
 
-              // Update the physical light based on urgent fault status
               digitalWrite(FAULT_LIGHT_PIN, anyUrgentActive ? LOW : HIGH);
 
-              // Only send to ESP32 if fault state changed
               if (faultWord2 != previousFaultWord2) {
                   Serial.println("[Table 2 state changed - sending to ESP32]");
 
-                  // Send all active faults from this table
                   for (int i = 0; i < NUM_FAULTS_2; i++) {
                       if (faultWord2 & faultTable2[i].mask) {
                           unsigned char txFault[8] = {0};
-                          txFault[0] = 2;  // Table ID
+                          txFault[0] = 2;  
                           txFault[1] = (uint8_t)(faultTable2[i].mask >> 8);
                           txFault[2] = (uint8_t)(faultTable2[i].mask & 0xFF);
                           txFault[3] = faultTable2[i].isUrgent ? 1 : 0;
@@ -201,11 +178,9 @@ void loop() {
                           delay(5);
                       }
                   }
-
                   previousFaultWord2 = faultWord2;
               }
           }
-          // Process other sensor nodes (Assumed to be Temp Nodes)
           else {
               float remoteTemp;
               memcpy(&remoteTemp, buf, 4); 
@@ -216,8 +191,6 @@ void loop() {
               Serial.println(" F");
           }
       }
-
-
     }
 
     //CODE FOR NODE 1 (MPPT)
@@ -225,32 +198,25 @@ void loop() {
       static unsigned long lastSend1 = 0;
       if (millis() - lastSend1 > 1000) {
           
-          // Read raw floats from physical sensors
           float t1_float = thermocouple1->readFahrenheit();
           delay(10);
           float t2_float = thermocouple2->readFahrenheit();
           delay(10);
           float t3_float = thermocouple3->readFahrenheit();
 
-          // Read WCS1800 raw ADC value (0-1023)
           int rawCurrent = analogRead(CURRENT_SENSOR_PIN);
 
-          // 8-byte payload array (all initialized to 0)
           unsigned char txPayload[8] = {0}; 
 
-          // Apply a -10F software calibration to offset local board heating
-          txPayload[0] = (uint8_t)(t1_float - 10.0); // Thermocouple 1 -> Byte 0
-          txPayload[1] = (uint8_t)(t2_float - 10.0); // Thermocouple 2 -> Byte 1
-          txPayload[2] = (uint8_t)(t3_float - 10.0); // Thermocouple 3 -> Byte 2
+          txPayload[0] = (uint8_t)(t1_float - 10.0); 
+          txPayload[1] = (uint8_t)(t2_float - 10.0); 
+          txPayload[2] = (uint8_t)(t3_float - 10.0); 
           
-          // Pack the 10-bit raw ADC current value into 2 bytes
-          txPayload[3] = (uint8_t)(rawCurrent >> 8);   // High Byte
-          txPayload[4] = (uint8_t)(rawCurrent & 0xFF); // Low Byte
+          txPayload[3] = (uint8_t)(rawCurrent >> 8);   
+          txPayload[4] = (uint8_t)(rawCurrent & 0xFF); 
 
-          // Send the 5-byte message over CAN
           CAN.sendMsgBuf(MY_CAN_ID, 0, 5, txPayload);
 
-          // Local debug print
           Serial.print(">>> [TX] Node 1 sent single frame. T1: ");
           Serial.print(txPayload[0]);
           Serial.print("F | T2: ");
@@ -266,11 +232,9 @@ void loop() {
 
     //CODE FOR NODE 2 (MOTORS)
     if(BOARD_INDEX == 2){
-      // TRANSMIT
       static unsigned long lastSend2 = 0;
       if (millis() - lastSend2 > 1000) {
           float motorPlaceholderData = 0.0;
-          // CAN.sendMsgBuf(MY_CAN_ID, 0, 4, (unsigned char*)&motorPlaceholderData);
           
           Serial.print(">>> [TX] Node ");
           Serial.print(BOARD_INDEX);
@@ -280,12 +244,8 @@ void loop() {
           lastSend2 = millis();
       }
     }
-
-    // Node 3 (ESP32) functionality moved to esp32_bms_receiver.ino
-    // ESP32 now handles all Node 3 receiving and fault decoding independently
 }
 
-// Decoding BMS 0x6B0 based on your image (Big Endian)
 void decodeBmsA(byte *buf) {
     int rawCurrent = (buf[0] << 8) | buf[1];
     int rawVoltage = (buf[2] << 8) | buf[3];
@@ -298,7 +258,6 @@ void decodeBmsA(byte *buf) {
     Serial.println("%");
 }
 
-// Decoding 0x6B1: Pack DCL, High Temp, Low Temp
 void decodeBmsB(byte *buf) {
     int dcl = (buf[0] << 8) | buf[1];
     int highTemp = (int8_t)buf[4]; 
