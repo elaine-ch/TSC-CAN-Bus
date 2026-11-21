@@ -359,6 +359,16 @@ void printDecodedCanData(const WirelessCanPacket &packet,
       break;
     }
 
+    case 0x6B3: {
+      const bool contactorEnableActive = (packet.data[0] != 0);
+      if (contactorEnableActive) {
+        Serial.println("Contactor Enable Output: ACTIVE (OK)");
+      } else {
+        Serial.println("Contactor Enable Output: OFF (CRITICAL FAULT)");
+      }
+      break;
+    }
+
     default:
       break;
   }

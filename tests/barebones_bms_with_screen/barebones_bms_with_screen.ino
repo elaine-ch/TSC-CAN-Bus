@@ -123,6 +123,10 @@ bool haveLastCanFrame = false;
 uint8_t lastDtcFlags[4] = {};
 bool haveDtcStatus = false;
 
+// Used to store latest status for motor controller contactor
+bool contactorEnableActive = true;
+bool haveMpoStatus = false;
+
 // Defined before Arduino generates function prototypes from this .ino file.
 struct DtcFaultDefinition {
   uint8_t byteIndex;
@@ -265,6 +269,9 @@ uint8_t activeDtcFaultCount() {
       ++count;
     }
   }
+  if (haveMpoStatus && !contactorEnableActive) {
+    ++count;
+  }
   return count;
 }
 
@@ -283,6 +290,13 @@ const char *activeDtcFaultAt(uint8_t index) {
       }
       --index;
     }
+  }
+
+  if (haveMpoStatus && !contactorEnableActive) {
+    if (index == 0) {
+      return "Contactor Enable OFF";
+    }
+    --index;
   }
   return nullptr;
 }
@@ -337,6 +351,13 @@ void updateDisplayCanFrame(const struct can_frame &frame) {
       lastCanIdentifier == 0x6B2 && frame.can_dlc >= 4) {
     memcpy(lastDtcFlags, frame.data, sizeof(lastDtcFlags));
     haveDtcStatus = true;
+  }
+
+  if (!lastCanExtended && !lastCanRemote &&
+      lastCanIdentifier == 0x6B3 && frame.can_dlc >= 1) {
+    // Active (non-zero) = OK, 0 = Contactor Enable turned OFF
+    contactorEnableActive = (frame.data[0] != 0);
+    haveMpoStatus = true;
   }
 
   haveLastCanFrame = true;
@@ -704,6 +725,9 @@ const char *knownFrameName(
     case 0x6B2:
       return "DTC flags 1/2 | Pack Current | Pack SOC | Checksum";
 
+    case 0x6B3:
+      return "Contactor Enable Output (MPO)";
+      
     default:
       return nullptr;
   }
