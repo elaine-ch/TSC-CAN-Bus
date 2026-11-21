@@ -1,12 +1,15 @@
 int BMS_IN = 5;
 int PRE = 3;
 int MAIN = 4;
+int BMS_PWR = 6;
 
 void setup() {
   Serial.begin(9600);
 
   //control
   pinMode(BMS_IN, INPUT);
+  //bms power signal
+  pinMode(BMS_PWR, INPUT);
   //precharge enable
   pinMode(PRE, OUTPUT);
   //charge enable
@@ -19,7 +22,7 @@ void setup() {
 void loop() {
 
   //read discharge enable from bms, start precharging when BMS output goes from 1BMS_INV -> 0V
-  if (digitalRead(BMS_IN) == LOW) {
+  if (digitalRead(BMS_PWR) == HIGH && digitalRead(BMS_IN) == LOW) {
     // Serial.println("Beginning");
     precharge();
 
@@ -40,7 +43,7 @@ void precharge() {
   // Turn pin 3 on and wait 6 sec
     Serial.println("Starting precharge");
     digitalWrite(PRE, HIGH);
-    delay(6000); 
+    delay(6500); 
 
     // Turn pin 3 off, wait 1 sec
     digitalWrite(PRE, LOW);
