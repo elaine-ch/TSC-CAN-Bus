@@ -70,6 +70,7 @@ constexpr bool PRINT_EVERY_RECEIVED_CAN_FRAME = true;
 constexpr int TFT_BL_PIN = 16;
 
 constexpr uint32_t DISPLAY_STAT_UPDATE_INTERVAL_MS = 500;
+constexpr uint32_t DISPLAY_DTC_PAGE_INTERVAL_MS = 2000;
 
 // ======================= END USER CONFIGURATION =======================
 
@@ -116,6 +117,18 @@ uint8_t lastCanData[8] = {};
 bool lastCanExtended = false;
 bool lastCanRemote = false;
 bool haveLastCanFrame = false;
+
+// The latest 0x6B2 frame is retained so its decoded status remains visible
+// while 0x6B0 and 0x6B1 frames continue arriving.
+uint8_t lastDtcFlags[4] = {};
+bool haveDtcStatus = false;
+
+// Defined before Arduino generates function prototypes from this .ino file.
+struct DtcFaultDefinition {
+  uint8_t byteIndex;
+  uint8_t bitMask;
+  const char *name;
+};
 
 // =====================================================================
 // DISPLAY FUNCTIONS
@@ -212,6 +225,100 @@ void displayPrintCanData(int x, int y) {
   }
 }
 
+constexpr DtcFaultDefinition DTC_FAULTS[] = {
+    {0, 0x01, "Discharge Limit Enforcement Fault"},
+    {0, 0x02, "Charger Safety Relay Fault"},
+    {0, 0x04, "Internal Hardware Fault"},
+    {0, 0x08, "Internal Heatsink Thermistor Fault"},
+    {0, 0x10, "Internal Software Fault"},
+    {0, 0x20, "Highest Cell Voltage Too High Fault"},
+    {0, 0x40, "Lowest Cell Voltage Too Low Fault"},
+    {0, 0x80, "Pack Too Hot Fault"},
+    {2, 0x01, "Internal Communication Fault"},
+    {2, 0x02, "Cell Balancing Stuck Off Fault"},
+    {2, 0x04, "Weak Cell Fault"},
+    {2, 0x08, "Low Cell Voltage Fault"},
+    {2, 0x10, "Open Wiring Fault"},
+    {2, 0x20, "Current Sensor Fault"},
+    {2, 0x40, "Highest Cell Voltage Over 5V Fault"},
+    {2, 0x80, "Cell ASIC Fault"},
+    {3, 0x01, "Weak Pack Fault"},
+    {3, 0x02, "Fan Monitor Fault"},
+    {3, 0x04, "Thermistor Fault"},
+    {3, 0x08, "External Communication Fault"},
+    {3, 0x10, "Redundant Power Supply Fault"},
+    {3, 0x20, "High Voltage Isolation Fault"},
+    {3, 0x40, "Input Power Supply Fault"},
+    {3, 0x80, "Charge Limit Enforcement Fault"},
+};
+
+constexpr size_t DTC_FAULT_COUNT = sizeof(DTC_FAULTS) / sizeof(DTC_FAULTS[0]);
+
+bool isDtcFaultSet(const DtcFaultDefinition &fault) {
+  return (lastDtcFlags[fault.byteIndex] & fault.bitMask) != 0;
+}
+
+uint8_t activeDtcFaultCount() {
+  uint8_t count = lastDtcFlags[1] != 0 ? 1 : 0;
+  for (size_t i = 0; i < DTC_FAULT_COUNT; ++i) {
+    if (isDtcFaultSet(DTC_FAULTS[i])) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+const char *activeDtcFaultAt(uint8_t index) {
+  if (lastDtcFlags[1] != 0) {
+    if (index == 0) {
+      return "RESERVED FLAG SET";
+    }
+    --index;
+  }
+
+  for (size_t i = 0; i < DTC_FAULT_COUNT; ++i) {
+    if (isDtcFaultSet(DTC_FAULTS[i])) {
+      if (index == 0) {
+        return DTC_FAULTS[i].name;
+      }
+      --index;
+    }
+  }
+  return nullptr;
+}
+
+void updateDisplayDtcStatus() {
+  // This panel intentionally overwrites the generic frame-description area.
+  tft.fillRect(10, 175, 460, 40, TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(10, 175);
+
+  if (!haveDtcStatus) {
+    tft.print("DTC: Waiting for 0x6B2...");
+    return;
+  }
+
+  const uint8_t faultCount = activeDtcFaultCount();
+  if (faultCount == 0) {
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.print("No BMS errors.");
+    return;
+  }
+
+  const uint8_t faultIndex =
+      (millis() / DISPLAY_DTC_PAGE_INTERVAL_MS) % faultCount;
+  const char *faultName = activeDtcFaultAt(faultIndex);
+
+  tft.setTextColor(TFT_RED, TFT_BLACK);
+  tft.print("Fault ");
+  tft.print(faultIndex + 1);
+  tft.print("/");
+  tft.print(faultCount);
+  tft.print(": ");
+  tft.println(faultName);
+}
+
 void updateDisplayCanFrame(const struct can_frame &frame) {
   lastCanExtended = (frame.can_id & CAN_EFF_FLAG) != 0;
   lastCanRemote = (frame.can_id & CAN_RTR_FLAG) != 0;
@@ -224,6 +331,12 @@ void updateDisplayCanFrame(const struct can_frame &frame) {
 
   if (!lastCanRemote) {
     memcpy(lastCanData, frame.data, frame.can_dlc);
+  }
+
+  if (!lastCanExtended && !lastCanRemote &&
+      lastCanIdentifier == 0x6B2 && frame.can_dlc >= 4) {
+    memcpy(lastDtcFlags, frame.data, sizeof(lastDtcFlags));
+    haveDtcStatus = true;
   }
 
   haveLastCanFrame = true;
@@ -281,21 +394,7 @@ void updateDisplayCanFrame(const struct can_frame &frame) {
 
   displayPrintCanData(10, 140);
 
-  // Known Orion frame information
-  tft.fillRect(10, 175, 460, 40, TFT_BLACK);
-  tft.setTextSize(2);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.setCursor(10, 175);
-
-  if (!lastCanExtended && lastCanIdentifier == 0x6B0) {
-    tft.print("6B0: Current | Voltage | SOC | Relay");
-  } else if (!lastCanExtended && lastCanIdentifier == 0x6B1) {
-    tft.print("6B1: DCL | High Temp | Low Temp");
-  } else if (!lastCanExtended && lastCanIdentifier == 0x6B2) {
-    tft.print("6B2: DTC | Current | SOC");
-  } else {
-    tft.print("Unknown CAN frame");
-  }
+  updateDisplayDtcStatus();
 }
 
 void updateDisplayStatistics() {
@@ -857,6 +956,7 @@ void updateDisplay() {
   lastDisplayUpdateMs = now;
 
   updateDisplayStatistics();
+  updateDisplayDtcStatus();
 }
 
 // =====================================================================
